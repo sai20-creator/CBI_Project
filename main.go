@@ -276,8 +276,8 @@ func main() {
 		go GetBuildingPermits(db)
 		go GetTaxiTrips(db)
 
-		// go GetCovidDetails(db)
-		// go GetCCVIDetails(db)
+		go GetCovidDetails(db)
+		go GetCCVIDetails(db)
 
 		http.HandleFunc("/", handler)
 
@@ -366,7 +366,7 @@ func GetTaxiTrips(db *sql.DB) {
 
 	// Get the the Taxi Trips for Taxi medallions list
 
-	var url = "https://data.cityofchicago.org/resource/wrvz-psew.json?$limit=500"
+	var url = "https://data.cityofchicago.org/resource/wrvz-psew.json?$limit=100"
 
 	tr := &http.Transport{
 		MaxIdleConns:          10,
@@ -397,7 +397,7 @@ func GetTaxiTrips(db *sql.DB) {
 
 	// Get the Taxi Trip list for rideshare companies like Uber/Lyft list
 	// Transportation-Network-Providers-Trips:
-	var url_2 = "https://data.cityofchicago.org/resource/m6dm-c72p.json?$limit=500"
+	var url_2 = "https://data.cityofchicago.org/resource/m6dm-c72p.json?$limit=100"
 
 	res_2, err := http.Get(url_2)
 	if err != nil {
@@ -1154,8 +1154,157 @@ func GetBuildingPermits(db *sql.DB) {
 
 func GetCovidDetails(db *sql.DB) {
 
-	fmt.Println("ADD-YOUR-CODE-HERE - To Implement GetCovidDetails")
+	fmt.Println("GetCovidDetails: Collecting Covid Detail Data")
+	// Data Collection needed from data source:
+	//https://data.cityofchicago.org/resource/yhhz-zm2v.json
 
+	drop_table := `drop table if exists covid_details`
+	_, err := db.Exec(drop_table)
+	if err != nil {
+		panic(err)
+	}
+
+	create_table := `CREATE TABLE IF NOT EXISTS "covid_details" (
+						"id"   SERIAL , 
+						"zip_code" VARCHAR(255), 
+						"week_number" VARCHAR(255), 
+						"week_start" VARCHAR(255),  
+						"week_end"      VARCHAR(255), 
+						"cases_weekly"      VARCHAR(255), 
+						"cases_cumulative"      VARCHAR(255), 
+						"case_rate_weekly"      VARCHAR(255), 
+						"case_rate_cumulative"      VARCHAR(255), 
+						"percent_tested_positive_weekly"      VARCHAR(255), 
+						"percent_tested_positive_cumulative"      VARCHAR(255), 
+						"population"      VARCHAR(255), 						
+						PRIMARY KEY ("id") 
+					);`
+
+	_, _err := db.Exec(create_table)
+	if _err != nil {
+		panic(_err)
+	}
+
+	fmt.Println("Created Table for Covid Details")
+
+	// While doing unit-testing keep the limit value to 500
+	// later you could change it to 1000, 2000, 10,000, etc.
+	var url = "https://data.cityofchicago.org/resource/yhhz-zm2v.json?$limit=500"
+
+	tr := &http.Transport{
+		MaxIdleConns:       10,
+		IdleConnTimeout:    300 * time.Second,
+		DisableCompression: true,
+	}
+
+	client := &http.Client{Transport: tr}
+
+	res, err := client.Get(url)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Received data from SODA REST API for Covid Details")
+
+	body, _ := io.ReadAll(res.Body)
+	var covid_data_list CovidJsonRecords
+	json.Unmarshal(body, &covid_data_list)
+
+	s := fmt.Sprintf("\n\n Covid Details: number of SODA records received = %d\n\n", len(covid_data_list))
+	io.WriteString(os.Stdout, s)
+
+	for i := 0; i < len(covid_data_list); i++ {
+
+		// We will execute defensive coding to check for messy/dirty/missing data values
+		// There are different methods to deal with messy/dirty/missing data.
+		// We will use the simplest method: drop records that have messy/dirty/missing data
+		// Any record that has messy/dirty/missing data we don't enter it in the data lake/table
+
+		zip_code := covid_data_list[i].Zip_code
+		if zip_code == "" {
+			continue
+		}
+
+		week_number := covid_data_list[i].Week_number
+		if week_number == "" {
+			continue
+		}
+
+		week_start := covid_data_list[i].Week_start
+		if week_start == "" {
+			continue
+		}
+
+		week_end := covid_data_list[i].Week_end
+		if week_end == "" {
+			continue
+		}
+
+		cases_weekly := covid_data_list[i].Cases_weekly
+		if cases_weekly == "" {
+			continue
+		}
+		cases_cumulative := covid_data_list[i].Cases_cumulative
+		if cases_cumulative == "" {
+			continue
+		}
+		case_rate_weekly := covid_data_list[i].Case_rate_weekly
+		if case_rate_weekly == "" {
+			continue
+		}
+
+		case_rate_cumulative := covid_data_list[i].Case_rate_cumulative
+		if case_rate_cumulative == "" {
+			continue
+		}
+		percent_tested_positive_weekly := covid_data_list[i].Percent_tested_positive_weekly
+		if percent_tested_positive_weekly == "" {
+			continue
+		}
+		percent_tested_positive_cumulative := covid_data_list[i].Percent_tested_positive_cumulative
+		if percent_tested_positive_cumulative == "" {
+			continue
+		}
+		population := covid_data_list[i].Population
+		if population == "" {
+			continue
+		}
+
+		sql := `INSERT INTO covid_details (
+			"zip_code", 
+			"week_number", 
+			"week_start",
+			"week_end",
+			"cases_weekly",
+			"cases_cumulative",
+			"case_rate_weekly",
+			"case_rate_cumulative",
+			"percent_tested_positive_weekly",
+			"percent_tested_positive_cumulative",
+			"population")
+		values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,$11)`
+
+		_, err = db.Exec(
+			sql,
+			zip_code,
+			week_number,
+			week_start,
+			week_end,
+			cases_weekly,
+			cases_cumulative,
+			case_rate_weekly,
+			case_rate_cumulative,
+			percent_tested_positive_weekly,
+			percent_tested_positive_cumulative,
+			population)
+
+		if err != nil {
+			panic(err)
+		}
+
+	}
+
+	fmt.Println("Completed Inserting Rows into the Covid Details Table")
 }
 
 // //////////////////////////////////////////////////////////////////////////////////
@@ -1191,6 +1340,105 @@ func GetCovidDetails(db *sql.DB) {
 // //////////////////////////////////////////////////////////////////////////////////
 func GetCCVIDetails(db *sql.DB) {
 
-	fmt.Println("ADD-YOUR-CODE-HERE - To Implement GetCCVIDetails")
+	fmt.Println("GetCCVIDetails: Collecting CCVI Data")
 
+	drop_table := `drop table if exists ccvi_details`
+	_, err := db.Exec(drop_table)
+	if err != nil {
+		panic(err)
+	}
+
+	create_table := `CREATE TABLE IF NOT EXISTS "ccvi_details" (
+						"id"   SERIAL, 
+						"geography_type" VARCHAR(255), 
+						"community_area_or_zip_code" VARCHAR(255), 
+						"community_name" VARCHAR(255), 
+						"ccvi_score" VARCHAR(255), 
+						"ccvi_category" VARCHAR(255),												
+						PRIMARY KEY ("id") 
+					);`
+
+	_, _err := db.Exec(create_table)
+	if _err != nil {
+		panic(_err)
+	}
+
+	fmt.Println("Created Table for ccvi_details")
+
+	var url = "https://data.cityofchicago.org/resource/xhc6-88s9.json?$limit=500"
+
+	tr := &http.Transport{
+		MaxIdleConns:       10,
+		IdleConnTimeout:    300 * time.Second,
+		DisableCompression: true,
+	}
+
+	client := &http.Client{Transport: tr}
+
+	res, err := client.Get(url)
+
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("CCVI Details: Received data from SODA REST API for CCVI")
+
+	body, _ := io.ReadAll(res.Body)
+	var ccvi_data_list CCVIJsonRecords
+	json.Unmarshal(body, &ccvi_data_list)
+
+	s := fmt.Sprintf("\n\n CCVI number of SODA records received = %d\n\n", len(ccvi_data_list))
+	io.WriteString(os.Stdout, s)
+
+	for i := 0; i < len(ccvi_data_list); i++ {
+
+		// We will execute defensive coding to check for messy/dirty/missing data values
+		// There are different methods to deal with messy/dirty/missing data.
+		// We will use the simplest method: drop records that have messy/dirty/missing data
+		// Any record that has messy/dirty/missing data we don't enter it in the data lake/table
+
+		geography_type := ccvi_data_list[i].Geography_type
+		if geography_type == "" {
+			continue
+		}
+
+		community_area_or_zip_code := ccvi_data_list[i].Community_area_or_ZIP_code
+		if community_area_or_zip_code == "" {
+			continue
+		}
+
+		community_name := ccvi_data_list[i].Community_name
+
+		ccvi_score := ccvi_data_list[i].CCVI_score
+		if ccvi_score == "" {
+			continue
+		}
+		ccvi_category := ccvi_data_list[i].CCVI_category
+		if ccvi_category == "" {
+			continue
+		}
+
+		sql := `INSERT INTO ccvi_details (
+		"geography_type" , 
+		"community_area_or_zip_code" , 
+		"community_name" , 
+		"ccvi_score" , 
+		"ccvi_category" )
+		values($1, $2, $3, $4, $5)`
+
+		_, err = db.Exec(
+			sql,
+			geography_type,
+			community_area_or_zip_code,
+			community_name,
+			ccvi_score,
+			ccvi_category)
+
+		if err != nil {
+			panic(err)
+		}
+
+	}
+
+	fmt.Println("Completed Inserting Rows into the ccvi_details Table")
 }
